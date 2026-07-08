@@ -1,11 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 
-// ─── CONFIG — fill in your deployed Apps Script URL after setup ───────────────
 const API_URL = import.meta.env.VITE_API_URL || "";
-const GROUP   = "wolfpack";
-
 const DEFAULT_ROSTER = ["Paul","Mike","Dave","Tom","Chris","Jim","Steve","Bob","Dan","Rick"];
-const MANAGER_PIN    = "1234";
+const MANAGER_PIN = "1234";
 
 const T = {
   bg:"#000000", card:"#111111", accent:"#FFFFFF", text:"#FFFFFF", subtext:"#888888",
@@ -16,46 +13,37 @@ const T = {
   border:"#333333", btnTextOnAccent:"#000000",
 };
 
-// ─── API helpers ──────────────────────────────────────────────────────────────
+const GROUP_SIZES = [4, 5, 6];
+
 async function api(action, body = {}) {
   if (!API_URL) throw new Error("API_URL not configured");
   const url = `${API_URL}?action=${action}`;
-  const res = await fetch(url, {
-    method: "POST",
-    body: JSON.stringify({ action, ...body }),
-  });
+  const res = await fetch(url, { method: "POST", body: JSON.stringify({ action, ...body }) });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
   return json;
 }
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
-function parseRoundDate(dateStr) {
-  if (!dateStr) return null;
-  const yr = new Date().getFullYear();
-  const d = new Date(`${dateStr}, ${yr}`);
-  if (isNaN(d)) return null;
-  if (d < new Date() - 60 * 86400000) {
-    const d2 = new Date(`${dateStr}, ${yr + 1}`);
-    return isNaN(d2) ? d : d2;
-  }
-  return d;
-}
 function isRoundPast(dateStr) {
-  const d = parseRoundDate(dateStr);
-  if (!d) return false;
+  if (!dateStr) return false;
+  const yr = new Date().getFullYear();
+  let d = new Date(`${dateStr}, ${yr}`);
+  if (isNaN(d)) return false;
+  if (d < new Date() - 60 * 86400000) d = new Date(`${dateStr}, ${yr + 1}`);
   const today = new Date(); today.setHours(0,0,0,0);
   return d < today;
 }
+
 function sortRounds(rounds) {
   return [...rounds].sort((a, b) => {
-    const da = parseRoundDate(a.date), db = parseRoundDate(b.date);
-    if (!da && !db) return 0; if (!da) return 1; if (!db) return -1;
+    const yr = new Date().getFullYear();
+    let da = new Date(`${a.date}, ${yr}`), db = new Date(`${b.date}, ${yr}`);
+    if (isNaN(da) && isNaN(db)) return 0;
+    if (isNaN(da)) return 1; if (isNaN(db)) return -1;
     return da - db;
   });
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
 function btn(bg, color, fontSize = 14) {
   return { background: bg, color, border: "none", borderRadius: 8,
     padding: fontSize <= 11 ? "5px 10px" : "10px 18px",
@@ -63,32 +51,35 @@ function btn(bg, color, fontSize = 14) {
 }
 function inp() {
   return { width: "100%", padding: "10px 12px", borderRadius: 8, fontSize: 14,
-    border: `1.5px solid ${T.border}`, background: T.card,
+    border: `1.5px solid ${T.border}`, background: "#1A1A1A",
     color: T.text, fontFamily: T.bodyFont, boxSizing: "border-box", outline: "none" };
 }
 
-// ─── Foursome Slots ───────────────────────────────────────────────────────────
-function FoursomeSlots({ players }) {
+function FoursomeSlots({ players, groupSize }) {
+  const gs = groupSize || 4;
   const total = players.reduce((s, p) => s + 1 + (p.guests || 0), 0);
-  const groups = Math.max(1, Math.ceil(total / 4));
+  const groups = Math.max(1, Math.ceil(total / gs));
   let filled = [];
   players.forEach(p => {
     filled.push({ name: p.name, guest: false });
     for (let i = 0; i < (p.guests || 0); i++) filled.push({ name: p.name, guest: true });
   });
+  const spotsOpen = (groups * gs) - total;
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, color: T.subtext, textTransform: "uppercase", letterSpacing: 1 }}>Foursomes</span>
+        <span style={{ fontSize: 11, color: T.subtext, textTransform: "uppercase", letterSpacing: 1 }}>
+          Groups of {gs}
+        </span>
         <span style={{ fontSize: 13, fontWeight: 700, color: T.accent }}>
           {total} player{total !== 1 ? "s" : ""} · {groups} group{groups !== 1 ? "s" : ""}
-          {total % 4 !== 0 && total > 0 && <span style={{ color: T.subtext, fontWeight: 400 }}> ({4 - (total % 4)} open)</span>}
+          {spotsOpen > 0 && total > 0 && <span style={{ color: T.subtext, fontWeight: 400 }}> ({spotsOpen} open)</span>}
         </span>
       </div>
       {Array.from({ length: groups }).map((_, gi) => (
         <div key={gi} style={{ display: "flex", gap: 5, marginBottom: 5 }}>
-          {Array.from({ length: 4 }).map((_, si) => {
-            const pl = filled[gi * 4 + si];
+          {Array.from({ length: gs }).map((_, si) => {
+            const pl = filled[gi * gs + si];
             return (
               <div key={si} style={{ flex: 1, height: 46, borderRadius: 7,
                 background: pl ? (pl.guest ? T.slotGuest : T.slotFilled) : T.slotEmpty,
@@ -109,8 +100,8 @@ function FoursomeSlots({ players }) {
   );
 }
 
-// ─── Round Summary Card ───────────────────────────────────────────────────────
 function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, players }) {
+  const gs = round.groupSize || 4;
   const inCount = players.filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0);
   const past = isRoundPast(round.date);
   return (
@@ -123,7 +114,7 @@ function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, pl
             {round.date}
           </div>
           <div style={{ fontSize: 12, color: isSelected ? T.btnTextOnAccent : T.subtext, marginTop: 2 }}>
-            {round.teeTime}{past ? " · ⏰ Past" : ""}
+            {round.teeTime} · Groups of {gs}{past ? " · ⏰ Past" : ""}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -144,40 +135,34 @@ function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, pl
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab]             = useState("rounds");
-  const [managerUnlocked, setMU]  = useState(false);
-  const [pinInput, setPinInput]   = useState("");
-  const [pinError, setPinError]   = useState(false);
-
-  const [rounds, setRounds]       = useState([]);
-  const [allPlayers, setAllPlayers] = useState({}); // { roundId: [players] }
-  const [roster, setRoster]       = useState(DEFAULT_ROSTER);
+  const [tab, setTab]               = useState("rounds");
+  const [managerUnlocked, setMU]    = useState(false);
+  const [pinInput, setPinInput]     = useState("");
+  const [pinError, setPinError]     = useState(false);
+  const [rounds, setRounds]         = useState([]);
+  const [allPlayers, setAllPlayers] = useState({});
+  const [roster, setRoster]         = useState(DEFAULT_ROSTER);
   const [selectedId, setSelectedId] = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [syncing, setSyncing]     = useState(false);
-  const [error, setError]         = useState("");
-
-  const [myName, setMyName]       = useState("");
-  const [myGuests, setMyGuests]   = useState(0);
-  const [responded, setResponded] = useState(false);
-
-  const [schedForm, setSchedForm] = useState({ date: "", teeTime: "", notes: "" });
-  const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [syncing, setSyncing]       = useState(false);
+  const [error, setError]           = useState("");
+  const [myName, setMyName]         = useState("");
+  const [myGuests, setMyGuests]     = useState(0);
+  const [responded, setResponded]   = useState(false);
+  const [schedForm, setSchedForm]   = useState({ date: "", teeTime: "", notes: "", groupSize: 4 });
+  const [editingId, setEditingId]   = useState(null);
   const [rosterEdit, setRosterEdit] = useState("");
 
-  // ── Load all data ────────────────────────────────────────────────────────────
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (silent = false) => {
     if (!API_URL) { setLoading(false); setError("⚠️ API not configured. See setup guide."); return; }
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [rRes, rosRes] = await Promise.all([api("getRounds"), api("getRoster")]);
       const active = (rRes.rounds || []).filter(r => !isRoundPast(r.date));
       const sorted = sortRounds(active);
       setRounds(sorted);
       setRoster(rosRes.roster?.length ? rosRes.roster : DEFAULT_ROSTER);
-      // Load players for each round
       const playerMap = {};
       await Promise.all(sorted.map(async r => {
         const pRes = await api("getPlayers", { roundId: r.id });
@@ -186,59 +171,44 @@ export default function App() {
       setAllPlayers(playerMap);
       if (sorted.length > 0 && !selectedId) setSelectedId(sorted[0].id);
       setError("");
-    } catch (e) {
-      setError("Could not connect to server. Check your API URL.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    } catch { setError("Could not connect to server."); }
+    finally { setLoading(false); }
+  }, [selectedId]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(loadAll, 30000);
-    return () => clearInterval(interval);
-  }, [loadAll]);
+  useEffect(() => { loadAll(); }, []);
+  // Silent refresh every 30 seconds — no loading flash
+  useEffect(() => { const i = setInterval(() => loadAll(true), 30000); return () => clearInterval(i); }, [loadAll]);
 
   const sel = rounds.find(r => r.id === selectedId) || null;
   const roundPlayers = (selectedId && allPlayers[selectedId]) || [];
-  const inPlayers  = roundPlayers.filter(p => p.status === "in");
+  const inPlayers = roundPlayers.filter(p => p.status === "in");
   const outPlayers = roundPlayers.filter(p => p.status === "out");
 
-  // ── Respond ──────────────────────────────────────────────────────────────────
   const handleRespond = async (status) => {
     if (!myName.trim() || !selectedId) return;
     setSyncing(true);
     try {
       await api("setResponse", { roundId: selectedId, name: myName.trim(), status, guests: myGuests });
-      await loadAll();
-      setResponded(true);
-    } catch { setError("Could not save response. Try again."); }
+      await loadAll(true); setResponded(true);
+    } catch { setError("Could not save response."); }
     setSyncing(false);
   };
 
   const handleRemovePlayer = async (name) => {
     if (!selectedId) return;
     setSyncing(true);
-    try {
-      await api("removePlayer", { roundId: selectedId, name });
-      await loadAll();
-    } catch { setError("Could not remove player."); }
+    try { await api("removePlayer", { roundId: selectedId, name }); await loadAll(true); }
+    catch { setError("Could not remove player."); }
     setSyncing(false);
   };
 
-  // ── Schedule ─────────────────────────────────────────────────────────────────
   const handleSchedule = async () => {
     if (!schedForm.date || !schedForm.teeTime) return;
     setSyncing(true);
     try {
-      const res = await api("saveRound", { id: editingId || undefined, date: schedForm.date, teeTime: schedForm.teeTime, notes: schedForm.notes, course: "Ledgerock" });
-      await loadAll();
-      setSelectedId(editingId || res.id);
-      setSchedForm({ date: "", teeTime: "", notes: "" });
-      setEditingId(null);
-      setTab("rounds");
+      const res = await api("saveRound", { id: editingId || undefined, ...schedForm, course: "Ledgerock" });
+      await loadAll(true); setSelectedId(editingId || res.id);
+      setSchedForm({ date: "", teeTime: "", notes: "", groupSize: 4 }); setEditingId(null); setTab("rounds");
     } catch { setError("Could not save round."); }
     setSyncing(false);
   };
@@ -247,44 +217,37 @@ export default function App() {
     if (!window.confirm("Remove this round?")) return;
     setSyncing(true);
     try {
-      await api("deleteRound", { id });
-      await loadAll();
+      await api("deleteRound", { id }); await loadAll(true);
       if (selectedId === id) setSelectedId(rounds.filter(r => r.id !== id)[0]?.id || null);
     } catch { setError("Could not remove round."); }
     setSyncing(false);
   };
 
-  // ── Manager ──────────────────────────────────────────────────────────────────
   const handlePin = () => {
     if (pinInput === MANAGER_PIN) { setMU(true); setPinError(false); setRosterEdit(roster.join("\n")); }
     else setPinError(true);
   };
 
   const handleSaveRoster = async () => {
-    const newRoster = rosterEdit.split("\n").map(s => s.trim()).filter(Boolean);
+    const nr = rosterEdit.split("\n").map(s => s.trim()).filter(Boolean);
     setSyncing(true);
-    try {
-      await api("saveRoster", { roster: newRoster });
-      setRoster(newRoster);
-      alert("Roster saved!");
-    } catch { setError("Could not save roster."); }
+    try { await api("saveRoster", { roster: nr }); setRoster(nr); alert("Roster saved!"); }
+    catch { setError("Could not save roster."); }
     setSyncing(false);
   };
 
-  const startEdit = (rd) => {
+  const startEdit = rd => {
     setEditingId(rd.id);
-    setSchedForm({ date: rd.date, teeTime: rd.teeTime, notes: rd.notes || "" });
+    setSchedForm({ date: rd.date, teeTime: rd.teeTime, notes: rd.notes || "", groupSize: rd.groupSize || 4 });
     setTab("schedule");
   };
 
   const copyInvite = () => {
     if (!sel) return;
     const msg = `Hey! 🐺 Wolfpack is teeing off ${sel.date} at ${sel.teeTime} — Ledgerock. Are you in? Mark yourself here: ${window.location.href}`;
-    navigator.clipboard.writeText(msg);
-    alert("Invite copied! Paste it into your texts or emails.");
+    navigator.clipboard.writeText(msg); alert("Invite copied!");
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ color: T.subtext, fontSize: 16, fontFamily: T.bodyFont }}>Loading Wolfpack...</div>
@@ -293,11 +256,10 @@ export default function App() {
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, fontFamily: T.bodyFont }}>
-      {/* Header */}
       <div style={{ background: T.card, borderBottom: `2px solid ${T.accent}`, padding: "13px 16px 0" }}>
         <div style={{ fontFamily: T.headerFont, fontSize: 26, fontWeight: 900, color: T.accent, letterSpacing: -0.5 }}>🐺 Wolfpack</div>
         <div style={{ fontSize: 12, color: T.subtext, marginBottom: 9 }}>{T.tagline}</div>
-        {syncing && <div style={{ fontSize: 11, color: T.subtext, marginBottom: 4 }}>⏳ Syncing...</div>}
+        {syncing && <div style={{ fontSize: 11, color: T.subtext, marginBottom: 4 }}>⏳ Saving...</div>}
         {error && <div style={{ fontSize: 12, color: T.danger, marginBottom: 6 }}>{error}</div>}
         <div style={{ display: "flex", borderTop: `1px solid ${T.border}` }}>
           {[{ id: "rounds", label: "Rounds" }, { id: "schedule", label: "+ Add Round" }, { id: "manager", label: "⚙ Manager" }].map(tb => (
@@ -323,18 +285,12 @@ export default function App() {
             </div>
           ) : (<>
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>
-                Upcoming · tap to view
-              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 1, marginBottom: 7 }}>Upcoming · tap to view</div>
               {rounds.map(rd => (
-                <RoundCard key={rd.id} round={rd}
-                  players={allPlayers[rd.id] || []}
+                <RoundCard key={rd.id} round={rd} players={allPlayers[rd.id] || []}
                   isSelected={rd.id === selectedId}
                   onClick={() => { setSelectedId(rd.id); setResponded(false); setMyName(""); setMyGuests(0); }}
-                  isManager={managerUnlocked}
-                  onCancel={handleCancelRound}
-                  onEdit={startEdit}
-                />
+                  isManager={managerUnlocked} onCancel={handleCancelRound} onEdit={startEdit} />
               ))}
             </div>
 
@@ -343,13 +299,13 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 13 }}>
                   <div>
                     <div style={{ fontFamily: T.headerFont, fontSize: 20, fontWeight: 900, color: T.accent }}>{sel.date}</div>
-                    <div style={{ fontSize: 13, color: T.subtext }}>Ledgerock · {sel.teeTime}</div>
+                    <div style={{ fontSize: 13, color: T.subtext }}>Ledgerock · {sel.teeTime} · Groups of {sel.groupSize || 4}</div>
                     {sel.notes && <div style={{ fontSize: 12, color: T.subtext, fontStyle: "italic", marginTop: 3 }}>📋 {sel.notes}</div>}
                   </div>
-                  <button onClick={loadAll} style={{ ...btn(T.pillBg, T.subtext, 11) }}>↻ Refresh</button>
+                  <button onClick={() => loadAll(true)} style={{ ...btn(T.pillBg, T.subtext, 11) }}>↻</button>
                 </div>
 
-                <FoursomeSlots players={inPlayers} />
+                <FoursomeSlots players={inPlayers} groupSize={sel.groupSize || 4} />
 
                 {!responded ? (<>
                   <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 7 }}>Your Response</div>
@@ -357,7 +313,7 @@ export default function App() {
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11 }}>
                     <label style={{ fontSize: 13, color: T.subtext, whiteSpace: "nowrap" }}>Guests bringing:</label>
                     <select value={myGuests} onChange={e => setMyGuests(Number(e.target.value))} style={{ ...inp(), width: "auto", flex: 1 }}>
-                      {[0, 1, 2, 3].map(n => <option key={n} value={n}>{n}</option>)}
+                      {[0,1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -395,9 +351,7 @@ export default function App() {
                 )}
                 {outPlayers.length > 0 && (
                   <div style={{ marginTop: 11 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>
-                      Out ({outPlayers.length})
-                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 1, marginBottom: 5 }}>Out ({outPlayers.length})</div>
                     {outPlayers.map(p => (
                       <div key={p.name} style={{ background: T.outBg, border: `1px solid ${T.outBorder}`, borderRadius: 8, padding: "8px 11px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ color: T.subtext, fontSize: 14, textDecoration: "line-through" }}>{p.name}</span>
@@ -430,12 +384,23 @@ export default function App() {
                   style={inp()} />
               </div>
             ))}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Group Size</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {GROUP_SIZES.map(n => (
+                  <button key={n} onClick={() => setSchedForm(prev => ({ ...prev, groupSize: n }))}
+                    style={{ ...btn(schedForm.groupSize === n ? T.accent : T.pillBg, schedForm.groupSize === n ? T.btnTextOnAccent : T.subtext), flex: 1 }}>
+                    {n}-man
+                  </button>
+                ))}
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button onClick={handleSchedule} disabled={!schedForm.date || !schedForm.teeTime || syncing}
                 style={{ ...btn(T.accent, T.btnTextOnAccent), flex: 2, opacity: (!schedForm.date || !schedForm.teeTime) ? 0.4 : 1 }}>
                 {editingId ? "Save Changes" : "Post Round"}
               </button>
-              <button onClick={() => { setTab("rounds"); setEditingId(null); setSchedForm({ date: "", teeTime: "", notes: "" }); }}
+              <button onClick={() => { setTab("rounds"); setEditingId(null); setSchedForm({ date: "", teeTime: "", notes: "", groupSize: 4 }); }}
                 style={{ ...btn(T.pillBg, T.subtext), flex: 1 }}>Cancel</button>
             </div>
           </div>
@@ -449,8 +414,7 @@ export default function App() {
                 <div style={{ fontSize: 32, marginBottom: 8 }}>🔒</div>
                 <div style={{ color: T.text, fontWeight: 700, marginBottom: 4 }}>Manager Access</div>
                 <div style={{ color: T.subtext, fontSize: 13, marginBottom: 15 }}>Enter the manager PIN.</div>
-                <input type="password" placeholder="PIN" value={pinInput}
-                  onChange={e => setPinInput(e.target.value)}
+                <input type="password" placeholder="PIN" value={pinInput} onChange={e => setPinInput(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && handlePin()}
                   style={{ ...inp(), textAlign: "center", letterSpacing: 8, marginBottom: 9 }} />
                 {pinError && <div style={{ color: T.danger, fontSize: 13, marginBottom: 8 }}>Incorrect PIN.</div>}
@@ -467,7 +431,7 @@ export default function App() {
                       <div key={rd.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
                         <div>
                           <div style={{ fontWeight: 700, color: T.text, fontSize: 14 }}>{rd.date}</div>
-                          <div style={{ fontSize: 12, color: T.subtext }}>{rd.teeTime} · {(allPlayers[rd.id] || []).filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0)} in</div>
+                          <div style={{ fontSize: 12, color: T.subtext }}>{rd.teeTime} · {rd.groupSize || 4}-man · {(allPlayers[rd.id] || []).filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0)} in</div>
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => startEdit(rd)} style={{ ...btn(T.accent, T.btnTextOnAccent, 11) }}>Edit</button>
