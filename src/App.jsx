@@ -14,6 +14,7 @@ const T = {
 };
 
 const GROUP_SIZES = [4, 5, 6];
+const MAX_SPOTS = 12;
 
 async function api(action, body = {}) {
   if (!API_URL) throw new Error("API_URL not configured");
@@ -24,12 +25,23 @@ async function api(action, body = {}) {
   return json;
 }
 
+// Clean display of date/time — strips any date object conversion artifacts
+function cleanDisplay(val) {
+  if (!val) return "";
+  const s = String(val);
+  // If it looks like a converted date object, return TBD
+  if (s.includes("GMT") || s.includes("1899") || s.includes("T00:00") || s.includes("T04:00")) return "TBD";
+  return s;
+}
+
 function isRoundPast(dateStr) {
   if (!dateStr) return false;
+  const s = cleanDisplay(dateStr);
+  if (s === "TBD" || s === "") return false;
   const yr = new Date().getFullYear();
-  let d = new Date(`${dateStr}, ${yr}`);
+  let d = new Date(`${s}, ${yr}`);
   if (isNaN(d)) return false;
-  if (d < new Date() - 60 * 86400000) d = new Date(`${dateStr}, ${yr + 1}`);
+  if (d < new Date() - 60 * 86400000) d = new Date(`${s}, ${yr + 1}`);
   const today = new Date(); today.setHours(0,0,0,0);
   return d < today;
 }
@@ -37,7 +49,8 @@ function isRoundPast(dateStr) {
 function sortRounds(rounds) {
   return [...rounds].sort((a, b) => {
     const yr = new Date().getFullYear();
-    let da = new Date(`${a.date}, ${yr}`), db = new Date(`${b.date}, ${yr}`);
+    const da = new Date(`${cleanDisplay(a.date)}, ${yr}`);
+    const db = new Date(`${cleanDisplay(b.date)}, ${yr}`);
     if (isNaN(da) && isNaN(db)) return 0;
     if (isNaN(da)) return 1; if (isNaN(db)) return -1;
     return da - db;
@@ -58,7 +71,8 @@ function inp() {
 function FoursomeSlots({ players, groupSize }) {
   const gs = groupSize || 4;
   const total = players.reduce((s, p) => s + 1 + (p.guests || 0), 0);
-  const groups = Math.max(1, Math.ceil(total / gs));
+  const spotsToShow = Math.max(gs, Math.ceil(total / gs) * gs, MAX_SPOTS);
+  const groups = Math.ceil(spotsToShow / gs);
   let filled = [];
   players.forEach(p => {
     filled.push({ name: p.name, guest: false });
@@ -68,12 +82,10 @@ function FoursomeSlots({ players, groupSize }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, color: T.subtext, textTransform: "uppercase", letterSpacing: 1 }}>
-          Groups of {gs}
-        </span>
+        <span style={{ fontSize: 11, color: T.subtext, textTransform: "uppercase", letterSpacing: 1 }}>Groups of {gs}</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: T.accent }}>
-          {total} player{total !== 1 ? "s" : ""} · {groups} group{groups !== 1 ? "s" : ""}
-          {spotsOpen > 0 && total > 0 && <span style={{ color: T.subtext, fontWeight: 400 }}> ({spotsOpen} open)</span>}
+          {total} player{total !== 1 ? "s" : ""}
+          {spotsOpen > 0 && total > 0 && <span style={{ color: T.subtext, fontWeight: 400 }}> · {spotsOpen} open</span>}
         </span>
       </div>
       {Array.from({ length: groups }).map((_, gi) => (
@@ -101,9 +113,11 @@ function FoursomeSlots({ players, groupSize }) {
 }
 
 function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, players }) {
-  const gs = round.groupSize || 4;
+  const gs = Number(round.groupSize) || 4;
   const inCount = players.filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0);
   const past = isRoundPast(round.date);
+  const dateDisplay = cleanDisplay(round.date);
+  const timeDisplay = cleanDisplay(round.teeTime);
   return (
     <div onClick={onClick} style={{ background: isSelected ? T.accent : T.card, borderRadius: 12,
       padding: "13px 15px", marginBottom: 7, border: `1.5px solid ${isSelected ? T.accent : T.border}`,
@@ -111,10 +125,10 @@ function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, pl
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <div style={{ fontFamily: T.headerFont, fontSize: 16, fontWeight: 900, color: isSelected ? T.btnTextOnAccent : T.text }}>
-            {round.date}
+            {dateDisplay || "No date set"}
           </div>
           <div style={{ fontSize: 12, color: isSelected ? T.btnTextOnAccent : T.subtext, marginTop: 2 }}>
-            {round.teeTime} · Groups of {gs}{past ? " · ⏰ Past" : ""}
+            {timeDisplay || "TBD"} · {gs}-man{past ? " · ⏰ Past" : ""}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -130,7 +144,7 @@ function RoundCard({ round, isSelected, onClick, isManager, onCancel, onEdit, pl
           </>}
         </div>
       </div>
-      {round.notes && <div style={{ fontSize: 11, color: isSelected ? T.btnTextOnAccent : T.subtext, marginTop: 4, fontStyle: "italic" }}>📋 {round.notes}</div>}
+      {round.notes && cleanDisplay(round.notes) && <div style={{ fontSize: 11, color: isSelected ? T.btnTextOnAccent : T.subtext, marginTop: 4, fontStyle: "italic" }}>📋 {cleanDisplay(round.notes)}</div>}
     </div>
   );
 }
@@ -153,9 +167,11 @@ export default function App() {
   const [schedForm, setSchedForm]   = useState({ date: "", teeTime: "", notes: "", groupSize: 4 });
   const [editingId, setEditingId]   = useState(null);
   const [rosterEdit, setRosterEdit] = useState("");
+  const [editingTeeTime, setEditingTeeTime] = useState(false);
+  const [newTeeTime, setNewTeeTime] = useState("");
 
   const loadAll = useCallback(async (silent = false) => {
-    if (!API_URL) { setLoading(false); setError("⚠️ API not configured. See setup guide."); return; }
+    if (!API_URL) { setLoading(false); setError("⚠️ API not configured."); return; }
     try {
       if (!silent) setLoading(true);
       const [rRes, rosRes] = await Promise.all([api("getRounds"), api("getRoster")]);
@@ -176,7 +192,6 @@ export default function App() {
   }, [selectedId]);
 
   useEffect(() => { loadAll(); }, []);
-  // Silent refresh every 30 seconds — no loading flash
   useEffect(() => { const i = setInterval(() => loadAll(true), 30000); return () => clearInterval(i); }, [loadAll]);
 
   const sel = rounds.find(r => r.id === selectedId) || null;
@@ -203,13 +218,30 @@ export default function App() {
   };
 
   const handleSchedule = async () => {
-    if (!schedForm.date || !schedForm.teeTime) return;
+    if (!schedForm.date) return;
     setSyncing(true);
     try {
-      const res = await api("saveRound", { id: editingId || undefined, ...schedForm, course: "Ledgerock" });
+      const res = await api("saveRound", {
+        id: editingId || undefined,
+        date: schedForm.date,
+        teeTime: schedForm.teeTime || "TBD",
+        notes: schedForm.notes,
+        groupSize: schedForm.groupSize,
+        course: "Ledgerock"
+      });
       await loadAll(true); setSelectedId(editingId || res.id);
       setSchedForm({ date: "", teeTime: "", notes: "", groupSize: 4 }); setEditingId(null); setTab("rounds");
     } catch { setError("Could not save round."); }
+    setSyncing(false);
+  };
+
+  const handleUpdateTeeTime = async () => {
+    if (!selectedId || !newTeeTime.trim()) return;
+    setSyncing(true);
+    try {
+      await api("updateTeeTime", { id: selectedId, teeTime: newTeeTime.trim() });
+      await loadAll(true); setEditingTeeTime(false); setNewTeeTime("");
+    } catch { setError("Could not update tee time."); }
     setSyncing(false);
   };
 
@@ -238,13 +270,15 @@ export default function App() {
 
   const startEdit = rd => {
     setEditingId(rd.id);
-    setSchedForm({ date: rd.date, teeTime: rd.teeTime, notes: rd.notes || "", groupSize: rd.groupSize || 4 });
+    setSchedForm({ date: cleanDisplay(rd.date), teeTime: cleanDisplay(rd.teeTime) === "TBD" ? "" : cleanDisplay(rd.teeTime), notes: rd.notes || "", groupSize: Number(rd.groupSize) || 4 });
     setTab("schedule");
   };
 
   const copyInvite = () => {
     if (!sel) return;
-    const msg = `Hey! 🐺 Wolfpack is teeing off ${sel.date} at ${sel.teeTime} — Ledgerock. Are you in? Mark yourself here: ${window.location.href}`;
+    const dateStr = cleanDisplay(sel.date);
+    const timeStr = cleanDisplay(sel.teeTime);
+    const msg = `Hey! 🐺 Wolfpack is teeing off ${dateStr} at ${timeStr === "TBD" ? "TBD (check app for updates)" : timeStr} — Ledgerock. Are you in? Mark yourself here: ${window.location.href}`;
     navigator.clipboard.writeText(msg); alert("Invite copied!");
   };
 
@@ -275,7 +309,6 @@ export default function App() {
 
       <div style={{ maxWidth: 520, margin: "0 auto", padding: "16px 13px 50px" }}>
 
-        {/* ROUNDS TAB */}
         {tab === "rounds" && (<>
           {rounds.length === 0 ? (
             <div style={{ background: T.card, borderRadius: 14, padding: 28, border: `1.5px dashed ${T.border}`, textAlign: "center" }}>
@@ -289,23 +322,45 @@ export default function App() {
               {rounds.map(rd => (
                 <RoundCard key={rd.id} round={rd} players={allPlayers[rd.id] || []}
                   isSelected={rd.id === selectedId}
-                  onClick={() => { setSelectedId(rd.id); setResponded(false); setMyName(""); setMyGuests(0); }}
+                  onClick={() => { setSelectedId(rd.id); setResponded(false); setMyName(""); setMyGuests(0); setEditingTeeTime(false); }}
                   isManager={managerUnlocked} onCancel={handleCancelRound} onEdit={startEdit} />
               ))}
             </div>
 
             {sel && (
               <div style={{ background: T.card, borderRadius: 14, padding: 17, border: `1px solid ${T.border}`, marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 13 }}>
-                  <div>
-                    <div style={{ fontFamily: T.headerFont, fontSize: 20, fontWeight: 900, color: T.accent }}>{sel.date}</div>
-                    <div style={{ fontSize: 13, color: T.subtext }}>Ledgerock · {sel.teeTime} · Groups of {sel.groupSize || 4}</div>
-                    {sel.notes && <div style={{ fontSize: 12, color: T.subtext, fontStyle: "italic", marginTop: 3 }}>📋 {sel.notes}</div>}
+                <div style={{ marginBottom: 13 }}>
+                  <div style={{ fontFamily: T.headerFont, fontSize: 20, fontWeight: 900, color: T.accent }}>{cleanDisplay(sel.date) || "No date"}</div>
+                  <div style={{ fontSize: 13, color: T.subtext, marginTop: 3 }}>
+                    Ledgerock · {Number(sel.groupSize) || 4}-man groups
                   </div>
-                  <button onClick={() => loadAll(true)} style={{ ...btn(T.pillBg, T.subtext, 11) }}>↻</button>
+
+                  {/* Tee Time — editable by anyone */}
+                  {!editingTeeTime ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                      <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>
+                        🕐 {cleanDisplay(sel.teeTime) || "TBD"}
+                      </span>
+                      <button onClick={() => { setEditingTeeTime(true); setNewTeeTime(cleanDisplay(sel.teeTime) === "TBD" ? "" : cleanDisplay(sel.teeTime)); }}
+                        style={{ ...btn(T.pillBg, T.subtext, 11), padding: "3px 10px" }}>
+                        {cleanDisplay(sel.teeTime) === "TBD" || !cleanDisplay(sel.teeTime) ? "Set tee time" : "Change"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                      <input placeholder="e.g. 8:30 AM" value={newTeeTime} onChange={e => setNewTeeTime(e.target.value)}
+                        style={{ ...inp(), flex: 1, padding: "7px 10px", fontSize: 13 }} />
+                      <button onClick={handleUpdateTeeTime} disabled={!newTeeTime.trim()}
+                        style={{ ...btn(T.inBorder, "#fff", 12), opacity: newTeeTime.trim() ? 1 : 0.4 }}>Save</button>
+                      <button onClick={() => setEditingTeeTime(false)}
+                        style={btn(T.pillBg, T.subtext, 12)}>✕</button>
+                    </div>
+                  )}
+
+                  {sel.notes && cleanDisplay(sel.notes) && <div style={{ fontSize: 12, color: T.subtext, fontStyle: "italic", marginTop: 4 }}>📋 {cleanDisplay(sel.notes)}</div>}
                 </div>
 
-                <FoursomeSlots players={inPlayers} groupSize={sel.groupSize || 4} />
+                <FoursomeSlots players={inPlayers} groupSize={Number(sel.groupSize) || 4} />
 
                 {!responded ? (<>
                   <div style={{ fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 7 }}>Your Response</div>
@@ -313,7 +368,7 @@ export default function App() {
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11 }}>
                     <label style={{ fontSize: 13, color: T.subtext, whiteSpace: "nowrap" }}>Guests bringing:</label>
                     <select value={myGuests} onChange={e => setMyGuests(Number(e.target.value))} style={{ ...inp(), width: "auto", flex: 1 }}>
-                      {[0,1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
+                      {[0,1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -365,7 +420,6 @@ export default function App() {
           </>)}
         </>)}
 
-        {/* SCHEDULE TAB */}
         {tab === "schedule" && (
           <div style={{ background: T.card, borderRadius: 14, padding: 20, border: `1px solid ${T.border}` }}>
             <div style={{ fontFamily: T.headerFont, fontSize: 18, fontWeight: 900, color: T.accent, marginBottom: 3 }}>
@@ -374,8 +428,8 @@ export default function App() {
             <div style={{ fontSize: 12, color: T.subtext, marginBottom: 14 }}>Course: Ledgerock</div>
             {[
               { label: "Date", key: "date", placeholder: "Thursday, July 10" },
-              { label: "Tee Time", key: "teeTime", placeholder: "8:30 AM" },
-              { label: "Notes (optional)", key: "notes", placeholder: "Cart path only, bring rain gear" },
+              { label: "Tee Time (or leave blank if TBD)", key: "teeTime", placeholder: "8:30 AM" },
+              { label: "Notes (optional)", key: "notes", placeholder: "Cart path only" },
             ].map(f => (
               <div key={f.key} style={{ marginBottom: 11 }}>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{f.label}</label>
@@ -385,7 +439,7 @@ export default function App() {
               </div>
             ))}
             <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Group Size</label>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: T.subtext, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>Group Size</label>
               <div style={{ display: "flex", gap: 8 }}>
                 {GROUP_SIZES.map(n => (
                   <button key={n} onClick={() => setSchedForm(prev => ({ ...prev, groupSize: n }))}
@@ -396,8 +450,8 @@ export default function App() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-              <button onClick={handleSchedule} disabled={!schedForm.date || !schedForm.teeTime || syncing}
-                style={{ ...btn(T.accent, T.btnTextOnAccent), flex: 2, opacity: (!schedForm.date || !schedForm.teeTime) ? 0.4 : 1 }}>
+              <button onClick={handleSchedule} disabled={!schedForm.date || syncing}
+                style={{ ...btn(T.accent, T.btnTextOnAccent), flex: 2, opacity: !schedForm.date ? 0.4 : 1 }}>
                 {editingId ? "Save Changes" : "Post Round"}
               </button>
               <button onClick={() => { setTab("rounds"); setEditingId(null); setSchedForm({ date: "", teeTime: "", notes: "", groupSize: 4 }); }}
@@ -406,7 +460,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MANAGER TAB */}
         {tab === "manager" && (
           <div>
             {!managerUnlocked ? (
@@ -430,8 +483,8 @@ export default function App() {
                     {rounds.map(rd => (
                       <div key={rd.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
                         <div>
-                          <div style={{ fontWeight: 700, color: T.text, fontSize: 14 }}>{rd.date}</div>
-                          <div style={{ fontSize: 12, color: T.subtext }}>{rd.teeTime} · {rd.groupSize || 4}-man · {(allPlayers[rd.id] || []).filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0)} in</div>
+                          <div style={{ fontWeight: 700, color: T.text, fontSize: 14 }}>{cleanDisplay(rd.date)}</div>
+                          <div style={{ fontSize: 12, color: T.subtext }}>{cleanDisplay(rd.teeTime) || "TBD"} · {Number(rd.groupSize)||4}-man · {(allPlayers[rd.id] || []).filter(p => p.status === "in").reduce((s, p) => s + 1 + (p.guests || 0), 0)} in</div>
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={() => startEdit(rd)} style={{ ...btn(T.accent, T.btnTextOnAccent, 11) }}>Edit</button>
@@ -450,7 +503,7 @@ export default function App() {
                 </div>
                 {sel && roundPlayers.length > 0 && (
                   <div style={{ background: T.card, borderRadius: 14, padding: 17, border: `1px solid ${T.border}` }}>
-                    <div style={{ fontWeight: 700, color: T.text, marginBottom: 9 }}>Remove Response — {sel.date}</div>
+                    <div style={{ fontWeight: 700, color: T.text, marginBottom: 9 }}>Remove Response — {cleanDisplay(sel.date)}</div>
                     {roundPlayers.map(p => (
                       <div key={p.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
                         <span style={{ color: T.text, fontSize: 14 }}>
